@@ -106,13 +106,6 @@ Written under `<output_dir>/`:
 | `targeting_results/`           | MOMA single-gene knockout flux perturbations |
 | `viz/`                         | UMAP embeddings, `pathway_barplot.png` (+ .svg), figures |
 
-## Tests
-
-```bash
-make unit        # pytest -v
-make coverage    # pytest with coverage report (term + HTML)
-```
-
 ## Repository layout
 
 ```
