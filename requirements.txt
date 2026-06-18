@@ -1,0 +1,42 @@
+# Python dependencies — versions pinned from conda env "gems" (Python 3.6.13)
+# Install:  pip install -r requirements.txt
+#
+# NOTE: gurobipy requires a Gurobi license and is usually installed via the
+#       Gurobi distribution / conda, not pip. It is listed here for reference.
+
+cobra==0.5.4
+gurobipy==9.1.2
+numpy==1.19.5
+pandas==0.23.4
+scipy==1.5.4
+matplotlib==3.3.4
+seaborn==0.11.2
+scikit-learn==0.24.2
+statsmodels==0.9.0
+umap-learn==0.5.4
+tqdm==4.64.1
+joblib==1.1.1
+patsy==0.5.3
+pyparsing==3.1.4
+python-libsbml==5.17.0
+python-dateutil==2.8.2
+pytz==2023.3
+six==1.16.0
+
+# -----------------------------------------------------------------------------
+# R dependencies (not installable via pip) — conda env "gems", R 4.2.0
+# The .R scripts under tf_metabolism/r_based_viz/ (flux_dimred.R, moma_project.R,
+# moma_viz.R, pathway_enrichment_plot.R) are invoked via Rscript.
+# Install with install.packages():
+#
+#   cluster    2.1.8.2
+#   dplyr      1.2.0
+#   ggplot2    4.0.2
+#   ggrepel    0.9.8
+#   jsonlite   2.0.0
+#   optparse   1.7.5
+#   patchwork  1.3.2
+#   scales     1.4.0
+#   stringr    1.6.0
+#   svglite    2.2.2
+#   umap       0.2.10.0

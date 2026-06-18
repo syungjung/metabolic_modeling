@@ -1,0 +1,1 @@
+python ./tf_metabolism.py -o ./output_CD -c1 ./input_data/HC_entrez_tpm.csv -c2 ./input_data/CD_entrez_tpm.csv

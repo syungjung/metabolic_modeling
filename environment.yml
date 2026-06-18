@@ -1,0 +1,54 @@
+# Conda environment for tf_metabolism 
+#
+#     conda env create -f environment.yml
+#     conda activate gems
+#
+# Notes:
+#   - gurobi requires a license (free academic license at https://www.gurobi.com/academia/).
+#   - Platform: built/tested on linux-64 with Python 3.6 and R 4.2.
+
+name: gems
+channels:
+  - gurobi
+  - conda-forge
+  - defaults
+
+dependencies:
+  # --- core runtimes ---
+  - python=3.6
+  - r-base=4.2
+
+  # --- Python packages (conda) ---
+  - numpy=1.19
+  - pandas=0.23
+  - scipy=1.5
+  - matplotlib=3.3
+  - seaborn=0.11
+  - scikit-learn=0.24
+  - statsmodels=0.9
+  - tqdm=4.64
+  - joblib=1.1
+  - python-libsbml=5.17
+
+  # --- optimization solver (needs license) ---
+  - gurobi=9.1
+
+  # --- R packages ---
+  - r-cluster
+  - r-dplyr
+  - r-ggplot2
+  - r-ggrepel
+  - r-jsonlite
+  - r-optparse
+  - r-patchwork
+  - r-scales
+  - r-stringr
+  - r-svglite
+  - r-umap
+
+  # --- pip-only Python packages ---
+  - pip
+  - pip:
+      - cobra==0.5.4
+      - umap-learn==0.5.4
+      - gurobipy==9.1.2
