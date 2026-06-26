@@ -89,6 +89,9 @@ theme_pub <- function(base_size = 10, base_family = "Liberation Sans") {
 # ---------------------------------------------------------------------------
 ref_csv <- file.path(output_viz_dir, sprintf("UMAP_%s_raw_data.csv", mode))
 if (!file.exists(ref_csv)) {
+  ref_csv <- file.path(output_viz_dir, sprintf("UMAP_%s_python_ref.csv", mode))
+}
+if (!file.exists(ref_csv)) {
   stop("Reference UMAP file not found: ", ref_csv)
 }
 
@@ -122,13 +125,13 @@ for (result_file in result_files) {
   sample_name <- sub("^MOMA_target_results_", "", bname)
 
   tmp_df  <- read.csv(result_file, row.names = 1, check.names = FALSE)
-  if (!"recovery_proj_pca" %in% colnames(tmp_df)) {
-    stop("recovery_proj_pca column missing in ", basename(result_file),
+  if (!"recovery_proj_umap" %in% colnames(tmp_df)) {
+    stop("recovery_proj_umap column missing in ", basename(result_file),
          " — re-run moma_project.R to regenerate UMAP_Results_*.csv.")
   }
   # Rank targets by recovery toward Control
-  # (recovery_proj_pca descending; > 0 = toward Control, larger = stronger).
-  top_idx <- order(tmp_df$recovery_proj_pca, decreasing = TRUE)[seq_len(min(10, nrow(tmp_df)))]
+  # (recovery_proj_umap descending; > 0 = toward Control, larger = stronger).
+  top_idx <- order(tmp_df$recovery_proj_umap, decreasing = TRUE)[seq_len(min(10, nrow(tmp_df)))]
   top_df      <- tmp_df[top_idx, ]
   top_df$gene <- to_symbol(rownames(top_df))   # Entrez ID → HGNC symbol
 
@@ -168,9 +171,29 @@ for (result_file in result_files) {
       y      = umap_ref[sample_name, "UMAP2"],
       xend   = top_df$X,
       yend   = top_df$Y,
-      toward = top_df$recovery_proj_pca > 0
+      toward = top_df$recovery_proj_umap > 0
     )
   }
+
+  # Calculate limits based on BOTH the reference UMAP layout and MOMA results
+  x_min <- min(c(umap_ref$UMAP1, tmp_df$X))
+  x_max <- max(c(umap_ref$UMAP1, tmp_df$X))
+  y_min <- min(c(umap_ref$UMAP2, tmp_df$Y))
+  y_max <- max(c(umap_ref$UMAP2, tmp_df$Y))
+
+  # Ensure x and y limits are identical (symmetric bounds)
+  all_min <- min(x_min, y_min)
+  all_max <- max(x_max, y_max)
+
+  range_val <- all_max - all_min
+  padding   <- 0.08
+
+  lim_min <- all_min - padding * range_val
+  lim_max <- all_max + padding * range_val
+
+  xlims <- c(lim_min, lim_max)
+  ylims <- c(lim_min, lim_max)
+
 
   p <- ggplot() +
     stat_ellipse(data = ctrl_df,
@@ -226,6 +249,7 @@ for (result_file in result_files) {
     scale_fill_manual(values = color_map, guide = "none") +
     labs(x = "UMAP 1", y = "UMAP 2",
          title = "MOMA Simulation results") +
+    coord_cartesian(xlim = xlims, ylim = ylims) +
     theme_pub() +
     theme(aspect.ratio = 1)   # physically square UMAP panel
 
@@ -240,7 +264,7 @@ for (result_file in result_files) {
     Symbol             = top_df$gene,
     Sample             = sample_name,
     rank               = seq_len(nrow(top_df)),
-    recovery_proj_pca  = top_df$recovery_proj_pca,
+    recovery_proj_umap = top_df$recovery_proj_umap,
     delta_distance     = top_df$delta_distance,
     distance_to_center = top_df$distance_to_center,
     stringsAsFactors   = FALSE

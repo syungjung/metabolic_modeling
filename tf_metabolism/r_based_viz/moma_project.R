@@ -101,23 +101,7 @@ project_pca <- function(X_mat, pca_model, n_pcs) {
   X_c %*% pca_model$rotation[, seq_len(n_pcs), drop = FALSE]
 }
 
-# ---------------------------------------------------------------------------
-# Recovery axis in PCA space (Test -> Control centroid), unit vector
-#   Linear & faithful to flux distances — preferred over 2D UMAP for scoring.
-#   Centroids = median of each group's ComBat baseline projected into PC space.
-# ---------------------------------------------------------------------------
-ctrl_ids <- intersect(rownames(umap_ref)[umap_ref$condition == "Control"],
-                      colnames(merged_df))
-test_ids <- intersect(rownames(umap_ref)[umap_ref$condition == "Test"],
-                      colnames(merged_df))
-ctrl_base <- t(merged_df[features, ctrl_ids, drop = FALSE])   # samples × features
-test_base <- t(merged_df[features, test_ids, drop = FALSE])
-ctrl_pca  <- project_pca(ctrl_base, pca_model, n_pcs)          # samples × n_pcs
-test_pca  <- project_pca(test_base, pca_model, n_pcs)
-ctrl_centroid_pca <- apply(ctrl_pca, 2, median)
-test_centroid_pca <- apply(test_pca, 2, median)
-rec_pca_vec <- ctrl_centroid_pca - test_centroid_pca
-rec_pca_vec <- rec_pca_vec / sqrt(sum(rec_pca_vec^2))
+
 
 # ---------------------------------------------------------------------------
 # Project each MOMA result file
@@ -152,7 +136,8 @@ for (moma_file in moma_files) {
 
   # Delta correction
   has_wt <- sample_name %in% colnames(merged_df) &&
-            sample_name %in% colnames(flux2_df)
+            sample_name %in% colnames(flux2_df) &&
+            sample_name %in% rownames(umap_ref)
   if (has_wt) {
     wt_combat <- as.numeric(merged_df[feat_order, sample_name])
     wt_raw    <- as.numeric(flux2_df[feat_order, sample_name])
@@ -160,7 +145,7 @@ for (moma_file in moma_files) {
     delta   <- sweep(moma_mat, 2, wt_raw,    "-")
     X_input <- sweep(delta,    2, wt_combat, "+")
   } else {
-    message(sprintf("  WARNING: %s not in combat/flux2 — raw projection", sample_name))
+    message(sprintf("  WARNING: %s not in combat/flux2/umap_ref — raw projection", sample_name))
     X_input <- moma_mat
   }
 
@@ -168,8 +153,6 @@ for (moma_file in moma_files) {
   pca_scores  <- project_pca(X_input, pca_model, n_pcs)   # genes × n_pcs
   umap_coords <- predict(umap_model, pca_scores)            # genes × 2
 
-  d_ko        <- sqrt((umap_coords[, 1] - center_x)^2 +
-                      (umap_coords[, 2] - center_y)^2)
   gene_names  <- colnames(df_moma)
 
   if (has_wt) {
@@ -178,25 +161,33 @@ for (moma_file in moma_files) {
     wt_mat  <- matrix(wt_combat, nrow = 1, dimnames = list("WT", feat_order))
     wt_pca  <- project_pca(wt_mat, pca_model, n_pcs)        # 1 × n_pcs
     wt_umap <- as.numeric(predict(umap_model, wt_pca))      # length 2
-    d_wt    <- sqrt((wt_umap[1] - center_x)^2 + (wt_umap[2] - center_y)^2)
+
+    # Get the true cohort reference coordinate for the sample
+    wt_ref_coords <- as.numeric(umap_ref[sample_name, c("UMAP1", "UMAP2")])
+
+    # Align the predicted coordinates to the reference space
+    X_corr <- wt_ref_coords[1] + (umap_coords[, 1] - wt_umap[1])
+    Y_corr <- wt_ref_coords[2] + (umap_coords[, 2] - wt_umap[2])
+
+    d_ko   <- sqrt((X_corr - center_x)^2 + (Y_corr - center_y)^2)
+    d_wt   <- sqrt((wt_ref_coords[1] - center_x)^2 + (wt_ref_coords[2] - center_y)^2)
 
     # Recovery-axis projections (> 0 = displaced TOWARD Control)
     disp_umap     <- sweep(umap_coords, 2, wt_umap,            "-")  # genes × 2
     rec_proj_umap <- as.numeric(disp_umap %*% rec_umap_vec)
-    disp_pca      <- sweep(pca_scores,  2, as.numeric(wt_pca), "-")  # genes × n_pcs
-    rec_proj_pca  <- as.numeric(disp_pca %*% rec_pca_vec)
 
     result_df <- data.frame(
-      X = umap_coords[, 1],
-      Y = umap_coords[, 2],
+      X = X_corr,
+      Y = Y_corr,
       distance_to_center    = d_ko,
       wt_distance_to_center = d_wt,
       delta_distance        = d_ko - d_wt,    # < 0 = toward Control (per-sample)
       recovery_proj_umap    = rec_proj_umap,  # > 0 = toward Control (UMAP 2D)
-      recovery_proj_pca     = rec_proj_pca,   # > 0 = toward Control (PCA, preferred)
       row.names = gene_names
     )
   } else {
+    d_ko <- sqrt((umap_coords[, 1] - center_x)^2 +
+                 (umap_coords[, 2] - center_y)^2)
     result_df <- data.frame(
       X = umap_coords[, 1],
       Y = umap_coords[, 2],
@@ -204,7 +195,6 @@ for (moma_file in moma_files) {
       wt_distance_to_center = NA_real_,
       delta_distance        = NA_real_,
       recovery_proj_umap    = NA_real_,
-      recovery_proj_pca     = NA_real_,
       row.names = gene_names
     )
   }

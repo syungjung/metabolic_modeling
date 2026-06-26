@@ -37,7 +37,8 @@ def _find_rscript():
     Search order:
     1. RSCRIPT env variable (user override)
     2. shutil.which('Rscript') — searches PATH
-    3. Raises RuntimeError if not found
+    3. Fallback to /data1/home/syjung/gems/bin/Rscript
+    4. Raises RuntimeError if not found
     """
     env = os.environ.get('RSCRIPT')
     if env:
@@ -45,6 +46,9 @@ def _find_rscript():
     found = shutil.which('Rscript')
     if found:
         return found
+    fallback = '/data1/home/syjung/gems/bin/Rscript'
+    if os.path.exists(fallback):
+        return fallback
     raise RuntimeError(
         'Rscript not found. Set the RSCRIPT environment variable or add R to PATH.'
     )
@@ -291,12 +295,33 @@ def run_umap(cobra_model, output_dir, output_viz_dir, flux_comparison_file,
     out_df['condition'] = conditions
     out_df.to_csv(os.path.join(output_viz_dir, f'UMAP_{mode}_raw_data.csv'))
 
+    # Save PCA coordinates as CSV
+    pca2d_df = pd.DataFrame(pca_scores[:, :2], index=merged.index, columns=['PC1', 'PC2'])
+    pca2d_df['condition'] = conditions
+    pca2d_df.to_csv(os.path.join(output_viz_dir, f'PCA_{mode}_raw_data.csv'))
+
+    # Save merged_flux.csv (features x samples) for MOMA projection compatibility
+    merged.T.to_csv(os.path.join(output_viz_dir, 'merged_flux.csv'))
+
+    # Save params JSON
+    params = {
+        'n_pcs': int(n_pcs),
+        'best_nn': 15,
+        'best_dist': 0.1,
+        'features': merged.columns.tolist(),
+        'samples': merged.index.tolist(),
+        'pca_explained_variance_ratio': pca_model.explained_variance_ratio_.tolist()
+    }
+    params_json = os.path.join(output_viz_dir, f'umap_{mode}_params.json')
+    with open(params_json, 'w') as fp:
+        json.dump(params, fp, indent=2)
+
     # Save models for MOMA projection
     joblib.dump(scaler,    os.path.join(output_viz_dir, f'umap_{mode}_scaler.pkl'))
     joblib.dump(pca_model, os.path.join(output_viz_dir, f'umap_{mode}_pca.pkl'))
     joblib.dump(reducer,   os.path.join(output_viz_dir, f'umap_{mode}_model.pkl'))
 
-    logging.info(f'  Saved: UMAP_{mode}_raw_data.csv | scaler/pca/umap pkl')
+    logging.info(f'  Saved: UMAP_{mode}_raw_data.csv | PCA_{mode}_raw_data.csv | umap_{mode}_params.json | scaler/pca/umap pkl')
     return target_reactions
 
 
@@ -563,16 +588,28 @@ def run_moma_results_umap(output_dir, output_viz_dir, target_reactions,
 
     # Control center from Python-space reference
     python_ref_csv = os.path.join(output_viz_dir, f'UMAP_{mode}_python_ref.csv')
+    if not os.path.exists(python_ref_csv):
+        python_ref_csv = os.path.join(output_viz_dir, f'UMAP_{mode}_raw_data.csv')
     ref_df   = pd.read_csv(python_ref_csv, index_col=0)
     ctrl_df  = ref_df[ref_df['condition'] == 'Control']
     center_x = np.median(ctrl_df['UMAP1'].values)
     center_y = np.median(ctrl_df['UMAP2'].values)
 
-    # Load merged flux baseline and raw flux2 for delta correction
+    # Test center + recovery axis in UMAP space
+    test_df_ref = ref_df[ref_df['condition'] == 'Test']
+    test_x = np.median(test_df_ref['UMAP1'].values)
+    test_y = np.median(test_df_ref['UMAP2'].values)
+
+    rec_umap_vec = np.array([center_x - test_x, center_y - test_y])
+    rec_umap_vec = rec_umap_vec / np.sqrt(np.sum(rec_umap_vec ** 2))
+
+    # Load merged flux baseline and raw flux2
     merged_df = pd.read_csv(os.path.join(output_viz_dir, 'merged_flux.csv'),
                             index_col=0)
     flux2_df  = pd.read_csv(os.path.join(output_dir, 'flux2.csv'),
                             index_col=0).fillna(0)
+
+
 
     # Project each MOMA result file
     moma_dir   = os.path.join(output_dir, 'targeting_results')
@@ -588,12 +625,15 @@ def run_moma_results_umap(output_dir, output_viz_dir, target_reactions,
         moma_mat = df_feat.T.values                       # genes × features
 
         # Delta correction
-        if sample_name in merged_df.columns and sample_name in flux2_df.columns:
+        has_wt = (sample_name in merged_df.columns and
+                  sample_name in flux2_df.columns and
+                  sample_name in ref_df.index)
+        if has_wt:
             wt_combat = merged_df.reindex(features)[sample_name].fillna(0).values
             wt_raw    = flux2_df.reindex(features)[sample_name].fillna(0).values
             X_input   = (moma_mat - wt_raw[np.newaxis, :]) + wt_combat[np.newaxis, :]
         else:
-            logging.warning('[MOMA-Python] %s not in combat/flux2 — raw projection',
+            logging.warning('[MOMA-Python] %s not in combat/flux2/ref_df — raw projection',
                             sample_name)
             X_input = moma_mat
 
@@ -603,18 +643,80 @@ def run_moma_results_umap(output_dir, output_viz_dir, target_reactions,
         umap_coords = reducer.transform(pca_scores)   # genes × 2
 
         gene_names = list(df_moma.columns)
-        result_df  = pd.DataFrame({
-            'X': umap_coords[:, 0],
-            'Y': umap_coords[:, 1],
-            'distance_to_center': np.sqrt((umap_coords[:, 0] - center_x) ** 2 +
-                                          (umap_coords[:, 1] - center_y) ** 2),
-        }, index=gene_names)
+
+        if has_wt:
+            # WT reference projected through the SAME pipeline (delta = 0)
+            wt_mat = wt_combat[np.newaxis, :]
+            wt_scaled = scaler.transform(wt_mat)
+            wt_pca = pca_model.transform(wt_scaled)
+            wt_umap = reducer.transform(wt_pca)[0]
+
+            # Get the true cohort reference coordinate for the sample
+            wt_ref_coords = ref_df.loc[sample_name, ['UMAP1', 'UMAP2']].values.astype(float)
+
+            # Align the predicted coordinates to the reference space
+            X_corr = wt_ref_coords[0] + (umap_coords[:, 0] - wt_umap[0])
+            Y_corr = wt_ref_coords[1] + (umap_coords[:, 1] - wt_umap[1])
+
+            d_ko = np.sqrt((X_corr - center_x) ** 2 + (Y_corr - center_y) ** 2)
+            d_wt = np.sqrt((wt_ref_coords[0] - center_x) ** 2 + (wt_ref_coords[1] - center_y) ** 2)
+
+            disp_umap = umap_coords - wt_umap
+            rec_proj_umap = np.dot(disp_umap, rec_umap_vec)
+
+            result_df = pd.DataFrame({
+                'X': X_corr,
+                'Y': Y_corr,
+                'distance_to_center': d_ko,
+                'wt_distance_to_center': d_wt,
+                'delta_distance': d_ko - d_wt,
+                'recovery_proj_umap': rec_proj_umap,
+            }, index=gene_names)
+        else:
+            d_ko = np.sqrt((umap_coords[:, 0] - center_x) ** 2 +
+                           (umap_coords[:, 1] - center_y) ** 2)
+            result_df = pd.DataFrame({
+                'X': umap_coords[:, 0],
+                'Y': umap_coords[:, 1],
+                'distance_to_center': d_ko,
+                'wt_distance_to_center': np.nan,
+                'delta_distance': np.nan,
+                'recovery_proj_umap': np.nan,
+            }, index=gene_names)
 
         out_csv = os.path.join(output_viz_dir,
                                f'UMAP_Results_{base_noext}.csv')
         result_df.to_csv(out_csv)
 
     logging.info('[MOMA-Python-%s] Done.', mode)
+
+
+def visualize_cohort_dimred(output_viz_dir, mode='df', use_r=True,
+                            c1_color='#009E73', c2_color='#D55E00',
+                            c1_label='Control', c2_label='Test'):
+    """Visualize cohort PCA and UMAP.
+
+    If use_r is True, delegates to flux_dimred_plot.R.
+    """
+    if use_r:
+        import subprocess
+        r_script = _r_script('flux_dimred_plot.R')
+        cmd = [
+            _find_rscript(), r_script,
+            '--output-viz-dir', output_viz_dir,
+            '--mode',           mode,
+            '--c1-color',       c1_color,
+            '--c2-color',       c2_color,
+            '--c1-label',       c1_label,
+            '--c2-label',       c2_label
+        ]
+        logging.info('[R-Cohort] Running: %s', ' '.join(cmd))
+        result = subprocess.run(cmd)
+        if result.returncode != 0:
+            raise RuntimeError('flux_dimred_plot.R exited with code %d' % result.returncode)
+        logging.info('[R-Cohort] Cohort visualization done.')
+    else:
+        logging.warning('Python cohort visualization not implemented — please use use_r=True')
 
 
 def visualize_moma_umap(output_viz_dir, mode='df', use_r=False):
@@ -688,10 +790,10 @@ def visualize_moma_umap(output_viz_dir, mode='df', use_r=False):
         sample_name = basename.replace('MOMA_target_results_', '')
         tmp_df      = pd.read_csv(result_file, index_col=0)
 
-        # Rank top-10 by recovery toward Control (recovery_proj_pca desc if present,
+        # Rank top-10 by recovery toward Control (recovery_proj_umap desc if present,
         # else fall back to distance_to_center asc)
-        if 'recovery_proj_pca' in tmp_df.columns:
-            top = tmp_df.sort_values('recovery_proj_pca', ascending=False).head(10)
+        if 'recovery_proj_umap' in tmp_df.columns:
+            top = tmp_df.sort_values('recovery_proj_umap', ascending=False).head(10)
         else:
             top = tmp_df.sort_values('distance_to_center', ascending=True).head(10)
 
@@ -714,8 +816,8 @@ def visualize_moma_umap(output_viz_dir, mode='df', use_r=False):
             sx, sy = sample_xy
             d_sample = np.hypot(sx - center_x, sy - center_y)
             for gid, r in top.iterrows():
-                if 'recovery_proj_pca' in top.columns:
-                    toward = r['recovery_proj_pca'] > 0
+                if 'recovery_proj_umap' in top.columns:
+                    toward = r['recovery_proj_umap'] > 0
                 else:
                     toward = np.hypot(r['X'] - center_x, r['Y'] - center_y) < d_sample
                 ax.annotate('', xy=(r['X'], r['Y']), xytext=(sx, sy),

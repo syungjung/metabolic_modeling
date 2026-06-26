@@ -1,4 +1,5 @@
 import pandas as pd
+import gseapy as gp
 from scipy import stats
 from statsmodels.stats.multitest import multipletests
 
@@ -15,48 +16,54 @@ def pathway_enrichment_analysis(cobra_model, selected_reactions, background_reac
     for each_reaction in cobra_model.reactions:
         if each_reaction.id not in all_reactions_set:
             continue
-        subsystem = each_reaction.subsystem.split(';')[0].strip()
-        if not subsystem or subsystem.strip().lower() == 'unassigned':
-            continue
-        pathway_info.setdefault(subsystem, []).append(each_reaction.id)
+        subsystems = [s.strip() for s in each_reaction.subsystem.split(';')]
+        for subsystem in subsystems:
+            if not subsystem or subsystem.lower() == 'unassigned':
+                continue
+            pathway_info.setdefault(subsystem, []).append(each_reaction.id)
 
-    rows = []
+    # Filter pathways to match the original criteria (pathway size >= 3, overlap >= 3)
+    filtered_pathways = {}
     for pathway, pathway_reactions in pathway_info.items():
         if len(pathway_reactions) < 3:
             continue
-        pathway_set = set(pathway_reactions)
-        if len(pathway_set & selected_set) < 3:
+        if len(set(pathway_reactions) & selected_set) < 3:
             continue
-        not_selected = all_reactions_set - selected_set
+        filtered_pathways[pathway] = pathway_reactions
 
-        a = len((all_reactions_set - pathway_set) & not_selected)
-        b = len(pathway_set & not_selected)
-        c = len((all_reactions_set - pathway_set) & selected_set)
-        d = len(pathway_set & selected_set)
-
-        oddsratio, p_value = stats.fisher_exact([[a, b], [c, d]], alternative='greater')
-        overlap_reactions = sorted(pathway_set & selected_set)
-
-        rows.append({
-            'Pathway': pathway,
-            'Overlap': f'{d}/{len(pathway_reactions)}',
-            'P-value': p_value,
-            'Odds ratio': oddsratio,
-            'Reactions': ';'.join(overlap_reactions),
-        })
-
-    if not rows:
+    if not filtered_pathways:
         return pd.DataFrame(columns=['Pathway', 'Overlap', 'P-value', 'Adjusted P-value', 'Odds ratio', 'Reactions'])
 
-    df = pd.DataFrame(rows).set_index('Pathway')
+    # Run GSEApy Enrichr for Over-Representation Analysis
+    res = gp.enrichr(
+        gene_list=list(selected_reactions),
+        gene_sets=filtered_pathways,
+        background=all_reactions,
+        outdir=None,
+        no_plot=True
+    )
+    
+    df = res.results
+    if df.empty:
+        return pd.DataFrame(columns=['Pathway', 'Overlap', 'P-value', 'Adjusted P-value', 'Odds ratio', 'Reactions'])
+
+    # Format the dataframe to match the expected format
+    df = df.rename(columns={
+        'Term': 'Pathway',
+        'Odds Ratio': 'Odds ratio',
+        'Genes': 'Reactions'
+    })
+    df = df.set_index('Pathway')
+    
+    # Filter by Odds ratio > 1
     df = df[df['Odds ratio'] > 1]
 
     if df.empty:
         return pd.DataFrame(columns=['Pathway', 'Overlap', 'P-value', 'Adjusted P-value', 'Odds ratio', 'Reactions'])
 
-    _, fdr, _, _ = multipletests(df['P-value'], method='fdr_bh')
-    pval_pos = list(df.columns).index('P-value') + 1
-    df.insert(pval_pos, 'Adjusted P-value', fdr)
+    # Keep only the requested columns
+    keep_cols = ['Overlap', 'P-value', 'Adjusted P-value', 'Odds ratio', 'Reactions']
+    df = df[keep_cols]
 
     return df
 

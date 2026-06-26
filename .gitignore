@@ -53,3 +53,8 @@ htmlcov/
 # Large input data (optional — uncomment to exclude; see README on data hosting)
 # ---------------------------------------------------------------------------
 # input_data/
+
+# Local metadata and logs (not to be committed)
+input_data/CD_batch_labels.csv
+input_data/UC_batch_labels.csv
+output_epithelial.log

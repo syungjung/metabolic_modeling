@@ -21,9 +21,10 @@ from tf_metabolism.omics_integration import tINIT
 from tf_metabolism.metabolic_simulation import Simulator
 
 from tf_metabolism.utils import argument_parser
-from tf_metabolism.utils import (run_r_umap, run_moma_results_umap,
+from tf_metabolism.utils import (run_umap, run_moma_results_umap,
                                   visualize_moma_umap,
-                                  visualize_pathway_enrichment)
+                                  visualize_pathway_enrichment,
+                                  visualize_cohort_dimred)
 
 from tf_metabolism.statistical_analysis import statistical_comparison
 from tf_metabolism.statistical_analysis import enrichment
@@ -291,26 +292,24 @@ def main():
     # TF enrichment is intentionally disabled (kept available as a function below).
     # predict_enriched_transcription_factors(transcript_id_info, trrust, cobra_model, output_dir, diff_flux_df)
 
-    ## MOMA targeting simulation (runs after pathway enrichment)
+    ## MOMA targeting simulation
     run_targeting_simulation(output_dir, targeting_result_dir)
 
-    ## UMAP visualization + MOMA projection (R-based: PCA → UMAP → pkl)
-    target_reactions = run_r_umap(
-        output_dir        = output_dir,
-        output_viz_dir    = output_viz_dir,
-        df_file           = output_dir + '/Differential_fluxes.csv',
-        mode              = 'both',
-    )
-    target_reactions_df = target_reactions.get('df', [])
+    ## UMAP visualization + MOMA projection (Python-based PCA → UMAP fit, R-based plotting)
+    # Run UMAP/PCA fit in Python for 'all' mode
+    run_umap(None, output_dir, output_viz_dir, output_dir + '/Differential_fluxes.csv', mode='all')
+    visualize_cohort_dimred(output_viz_dir, mode='all', use_r=True)
+
+    # Run UMAP/PCA fit in Python for 'df' mode
+    target_reactions_df = run_umap(None, output_dir, output_viz_dir, output_dir + '/Differential_fluxes.csv', mode='df')
     if target_reactions_df:
-        run_moma_results_umap(output_dir, output_viz_dir, target_reactions_df, mode='df', use_r=True)
+        visualize_cohort_dimred(output_viz_dir, mode='df', use_r=True)
+        run_moma_results_umap(output_dir, output_viz_dir, target_reactions_df, mode='df', use_r=False)
         visualize_moma_umap(output_viz_dir, mode='df', use_r=True)
     else:
         logging.warning('No DF reactions — skipping MOMA projection.')
 
-    ## Pathway enrichment bar plot → viz/pathway_barplot.png
-    # use_r=True  → R / ggplot2 backend (pathway_enrichment_plot.R)
-    # use_r=False → matplotlib backend
+    ## Pathway enrichment bar plot
     visualize_pathway_enrichment(output_dir, output_viz_dir, use_r=True)
 
     logging.info(time.strftime("Elapsed time %H:%M:%S", time.gmtime(time.time() - start)))
