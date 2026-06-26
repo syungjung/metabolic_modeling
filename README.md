@@ -23,7 +23,7 @@ The pipeline (`tf_metabolism/__main__.py`) runs end to end:
    reactions to highlight reprogrammed pathways (`statistical_analysis/enrichment.py`).
 6. **MOMA targeting simulation** — single gene knockouts on each condition-specific GEM,
    scored by flux perturbation via MOMA (`run_targeting_simulation`, writes `targeting_results/`).
-7. **Visualization** — PCA/UMAP embedding fitting and MOMA projection computations are performed in Python (using scikit-learn and umap-learn). Publication-quality figures (cohort PCA/UMAP panel plots and MOMA targeting plots) are generated in R using the updated visualization scripts (`flux_dimred_plot.R` and `moma_viz.R`). The enriched-pathway bar plot has a selectable backend: R/ggplot2 or matplotlib (`visualize_pathway_enrichment(..., use_r=True|False)`, both write `viz/pathway_barplot.png`).
+7. **Visualization** — PCA/UMAP embedding fitting and MOMA projections in Python, followed by publication-quality plotting in R (`flux_dimred_plot.R`, `moma_viz.R`).
 
 ## Requirements
 
